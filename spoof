@@ -5,45 +5,83 @@ Module spoof
 Takes an image and an arbitrary hexstring as input, and
 returns an adjusted file but has a hash that begins with the given hexstring
 """
-from PIL import Image
 import hashlib
 import random
 import sys
+import os
+from multiprocessing import Pool, cpu_count
+from PIL import Image
+
+
+def validate_inputs(image_path, target_prefix):
+    """
+    Validates the input image path and hex prefix.
+    """
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"The file '{image_path}' does not exist.")
+
+    try:
+        with Image.open(image_path) as img:
+            if img.format not in ("JPEG", "PNG", "BMP", "TIFF"):
+                raise ValueError("Unsupported image format. Supported formats: JPEG, PNG, BMP, TIFF.")
+    except Exception as e:
+        raise ValueError(f"Error opening image file: {e}")
+
+    if not all(c in "0123456789abcdef" for c in target_prefix):
+        raise ValueError("The hex prefix contains invalid characters. Use only 0-9 and a-f.")
+
+
+def modify_worker(args):
+    """
+    Worker function to modify the image in parallel.
+    """
+    image_path, target_prefix, output_path, worker_id = args
+    img = Image.open(image_path)
+    width, height = img.size
+    pixels = img.load()
+    target_prefix = target_prefix.lower()
+    image_format = img.format
+
+    while True:
+        # Randomly flip a bit in a random pixel
+        x, y = random.randint(0, width - 1), random.randint(0, height - 1)
+        pixel = list(pixels[x, y])
+
+        # Randomly select a channel to flip (R, G, or B)
+        channel = random.randint(0, len(pixel) - 1)
+        pixel[channel] ^= 1
+        pixels[x, y] = tuple(pixel)
+
+        # Save the modified image temporarily
+        temp_output = f"{output_path}.worker_{worker_id}.tmp"
+        img.save(temp_output, format=image_format)
+
+        # Check its hash
+        with open(temp_output, "rb") as f:
+            file_hash = hashlib.sha512(f.read()).hexdigest()
+
+        if file_hash.startswith(target_prefix):
+            img.save(output_path, format=image_format)
+            os.remove(temp_output)
+            return file_hash
 
 def modify(image_path, output_path, target_prefix):
 	"""
 	Modifies the given image to have a hash that starts with the given prefix
-	"""
-	img = Image.open(image_path)
-	width, height = img.size
-	pixels = img.load()
-	target_prefix = target_prefix.lower()
+    using multiprocessing.
+    """
+	num_workers = cpu_count()
+	print(f"Using {num_workers} CPU cores for parallel processing.")
 	
-	while True:
-		# Randomly flip a bit in a random pixel
-		print(f"Attempting to match prefix: {target_prefix}")
-		x, y = random.randint(0, width - 1), random.randint(0, height - 1)
-		pixel = list(pixels[x, y])
-		
-		# Randomly select a channel to flip (R, G, or B)
-		print(f"Modifying pixel at ({x}, {y})")
-		channel = random.randint(0, len(pixel) - 1)
-		pixel[channel] ^= 1
-		pixels[x, y] = tuple(pixel)
-		
-		# Save the modified image and check its hash
-		print(f"Saving modified image to {output_path}")
-		img.save(output_path)
-		with open(output_path, "rb") as f:
-			file_hash = hashlib.sha512(f.read()).hexdigest()
-		
-		# Check if the hash starts with the target prefix
-		print(f"Confirming hash")
-		if file_hash.startswith(target_prefix):
-			print(f"Match found: {file_hash}")
-			break
+	with Pool(num_workers) as pool:
+		args = [(image_path, target_prefix, output_path, i) for i in range(num_workers)]
+		for result in pool.imap_unordered(modify_worker, args):
+			if result:
+				print(f"Match found: {result}")
+				pool.terminate()
+				return
 				
-	print(f"Modified image saved as {output_path}")
+	print("No match found after exhaustive search. Increase prefix length or modify parameters.")
 
 
 if __name__ == "__main__":
@@ -54,5 +92,10 @@ if __name__ == "__main__":
 	hex_prefix = sys.argv[1].lower().replace("0x", "")
 	input_image = sys.argv[2]
 	output_image = sys.argv[3]
-		
-	modify(input_image, output_image, hex_prefix)
+	
+	try:
+		validate_inputs(input_image, hex_prefix)
+		modify(input_image, output_image, hex_prefix)
+	except Exception as e:
+		print(f"Error: {e}")
+		sys.exit(1)
