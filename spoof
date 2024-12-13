@@ -1,0 +1,58 @@
+#!/usr/bin/python3
+"""
+Module spoof
+
+Takes an image and an arbitrary hexstring as input, and
+returns an adjusted file but has a hash that begins with the given hexstring
+"""
+from PIL import Image
+import hashlib
+import random
+import sys
+
+def modify(image_path, output_path, target_prefix):
+	"""
+	Modifies the given image to have a hash that starts with the given prefix
+	"""
+	img = Image.open(image_path)
+	width, height = img.size
+	pixels = img.load()
+	target_prefix = target_prefix.lower()
+	
+	while True:
+		# Randomly flip a bit in a random pixel
+		print(f"Attempting to match prefix: {target_prefix}")
+		x, y = random.randint(0, width - 1), random.randint(0, height - 1)
+		pixel = list(pixels[x, y])
+		
+		# Randomly select a channel to flip (R, G, or B)
+		print(f"Modifying pixel at ({x}, {y})")
+		channel = random.randint(0, len(pixel) - 1)
+		pixel[channel] ^= 1
+		pixels[x, y] = tuple(pixel)
+		
+		# Save the modified image and check its hash
+		print(f"Saving modified image to {output_path}")
+		img.save(output_path)
+		with open(output_path, "rb") as f:
+			file_hash = hashlib.sha512(f.read()).hexdigest()
+		
+		# Check if the hash starts with the target prefix
+		print(f"Confirming hash")
+		if file_hash.startswith(target_prefix):
+			print(f"Match found: {file_hash}")
+			break
+				
+	print(f"Modified image saved as {output_path}")
+
+
+if __name__ == "__main__":
+	if len(sys.argv) != 4:
+		print(f"Usage: {sys.argv[0]} <hex_prefix> <image_path> <output_path>")
+		sys.exit(1)
+
+	hex_prefix = sys.argv[1].lower().replace("0x", "")
+	input_image = sys.argv[2]
+	output_image = sys.argv[3]
+		
+	modify(input_image, output_image, hex_prefix)
